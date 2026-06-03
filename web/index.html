@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Faultline — Live Incident Investigator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Faultline</h1>
+    <p class="tag">Autonomous incident root-cause investigation, gated by you.</p>
+  </header>
+
+  <main>
+    <section id="controls">
+      <button id="start" disabled>Start investigation (phase 5+)</button>
+      <button id="approve" disabled>Approve rollback (phase 7)</button>
+      <span id="status">phase 0 scaffold — UI not wired yet</span>
+    </section>
+
+    <section id="stream">
+      <h2>Investigation stream</h2>
+      <ol id="steps"></ol>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

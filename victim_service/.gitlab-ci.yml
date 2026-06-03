@@ -1,0 +1,23 @@
+# GitLab CI for the victim service.
+#
+# When the human clicks "Approve" in the Faultline console, Faultline merges
+# the draft rollback MR via the GitLab MCP toolset. This pipeline then redeploys
+# the reverted code to Cloud Run, which is what makes "<1 minute recovery"
+# possible.
+#
+# Phase 1 fills in real Cloud Run deploy steps once a workload-identity-
+# federated GitLab CI <-> GCP service account is set up. Phase 0 = placeholder.
+
+stages:
+  - deploy
+
+deploy_to_cloud_run:
+  stage: deploy
+  image: google/cloud-sdk:slim
+  rules:
+    # Only redeploy on default-branch pushes (i.e. after MR merge).
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - echo "Phase 0 scaffold. Phase 1 will authenticate via Workload Identity"
+    - echo "Federation and run: gcloud builds submit + gcloud run deploy."
+    - exit 0

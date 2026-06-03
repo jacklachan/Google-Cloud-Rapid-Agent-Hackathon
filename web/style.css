@@ -1,0 +1,61 @@
+/* Faultline console — minimal phase-0 styling. */
+
+:root {
+  --bg: #0e1116;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --accent: #f0883e;
+  --border: #30363d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+header {
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { margin: 0; color: var(--accent); }
+header .tag { margin: 0.25rem 0 0; color: var(--muted); }
+
+main { padding: 1.5rem 2rem; }
+
+#controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:not(:disabled):hover { border-color: var(--accent); }
+
+#status { color: var(--muted); }
+
+#stream h2 { font-size: 1rem; color: var(--muted); margin-top: 0; }
+
+#steps {
+  padding-left: 1.25rem;
+  border-left: 2px solid var(--border);
+  margin-left: 0.5rem;
+}
+
+#steps li { margin: 0.5rem 0; }
