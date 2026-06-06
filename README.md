@@ -122,7 +122,7 @@ The agent's behaviour is governed by a fixed 8-step policy baked verbatim into t
 
 - [x] **Phase 0** — scaffold, MIT license, env contract, README skeleton.
 - [x] **Phase 1** — victim_service (3-role FastAPI chain, one image), OpenTelemetry, Dockerfile, Cloud Run deploy script, regression toggle.
-- [ ] Phase 2 — telemetry read tools (with fake/local mode).
+- [x] **Phase 2** — telemetry read tools (Cloud Logging/Trace/Monitoring) with `FAULTLINE_FAKE_TELEMETRY=1` fixture mode keyed by `FAULTLINE_FAKE_SCENARIO`.
 - [ ] Phase 3 — GitLab MCP toolset wiring; round-trip issue + draft MR.
 - [ ] Phase 4 — Gemini ADK agent + investigation policy as system prompt.
 - [ ] Phase 5 — FastAPI server + SSE step streaming.

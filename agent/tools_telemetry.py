@@ -1,50 +1,227 @@
 """Telemetry read tools.
 
-These wrap Cloud Logging, Cloud Trace and Cloud Monitoring as ADK function
-tools the agent can call during an investigation. A fake-mode toggle returns
-canned data so pytest and local development never touch live GCP.
+Each function below is registered with ADK as a function tool in phase 4. The
+agent calls them during step 1 (read the signal), step 2 (find the true
+source), and step 3 (establish the change window).
 
-Filled with real implementations in phase 2.
+Behaviour:
+  - When FAULTLINE_FAKE_TELEMETRY=1 (or GOOGLE_CLOUD_PROJECT is unset), the
+    tools return canned fixtures keyed off FAULTLINE_FAKE_SCENARIO. This is
+    what we use for tests and for offline agent development.
+  - Otherwise they hit Cloud Logging / Trace / Monitoring for the configured
+    project.
+
+Real-mode queries are kept narrow on purpose: each tool returns a small,
+JSON-serialisable dict the LLM can reason over. We do not stream raw GCP
+responses back at the model.
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import logging
 import os
 from typing import Any
 
+from . import fixtures
+
+
+log = logging.getLogger(__name__)
+
 
 def _fake_mode() -> bool:
-    return os.getenv("FAULTLINE_FAKE_TELEMETRY", "1") == "1"
+    return (
+        os.getenv("FAULTLINE_FAKE_TELEMETRY", "1") == "1"
+        or not os.getenv("GOOGLE_CLOUD_PROJECT")
+    )
 
+
+def _project() -> str:
+    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        raise RuntimeError("GOOGLE_CLOUD_PROJECT is not set.")
+    return project
+
+
+# ---------------------------------------------------------------------------
+# query_error_logs
+# ---------------------------------------------------------------------------
 
 def query_error_logs(service: str, window_minutes: int = 15) -> dict[str, Any]:
-    """Return recent error logs for ``service`` over the last ``window_minutes``.
+    """Return recent ERROR-or-worse logs for ``service`` over the last window.
 
-    Real implementation will hit Cloud Logging. Phase 2.
+    The shape of the return value is::
+
+        {"service": str, "entries": [{"t": iso8601, "severity": str, "msg": str}, ...]}
     """
-    raise NotImplementedError("query_error_logs: implemented in phase 2")
+    if _fake_mode():
+        return fixtures.fake_error_logs(service)
+
+    from google.cloud import logging as gcp_logging  # type: ignore
+
+    client = gcp_logging.Client(project=_project())
+    end = dt.datetime.now(dt.timezone.utc)
+    start = end - dt.timedelta(minutes=window_minutes)
+    flt = (
+        f'resource.labels.service_name="{service}" '
+        f'AND severity>=ERROR '
+        f'AND timestamp>="{start.isoformat()}"'
+    )
+    entries: list[dict[str, Any]] = []
+    for entry in client.list_entries(filter_=flt, order_by=gcp_logging.DESCENDING, max_results=50):
+        payload = entry.payload if isinstance(entry.payload, str) else str(entry.payload)
+        entries.append(
+            {
+                "t": entry.timestamp.isoformat() if entry.timestamp else None,
+                "severity": str(entry.severity),
+                "msg": payload[:500],
+            }
+        )
+    return {"service": service, "entries": entries}
 
 
-def fetch_recent_traces(service: str, window_minutes: int = 15) -> dict[str, Any]:
-    """Return a sample of recent traces touching ``service``.
+# ---------------------------------------------------------------------------
+# read_metric
+# ---------------------------------------------------------------------------
 
-    Real implementation will hit Cloud Trace. Phase 2.
-    """
-    raise NotImplementedError("fetch_recent_traces: implemented in phase 2")
+# Maps logical metric names to (metric_type, aligner). For now we wrap the
+# Cloud Run built-in metrics — sufficient for the demo.
+_METRIC_MAP = {
+    "error_rate": ("run.googleapis.com/request_count", "ALIGN_RATE"),
+    "p95_latency_ms": ("run.googleapis.com/request_latencies", "ALIGN_PERCENTILE_95"),
+    "mem_usage_mb": ("run.googleapis.com/container/memory/utilizations", "ALIGN_MEAN"),
+}
 
 
 def read_metric(service: str, metric: str, window_minutes: int = 15) -> dict[str, Any]:
-    """Read a named metric series (error_rate, p95_latency_ms, mem_usage_mb).
+    """Read a named metric series for ``service``.
 
-    Real implementation will hit Cloud Monitoring. Phase 2.
+    Supported metrics: error_rate, p95_latency_ms, mem_usage_mb.
+    Return shape::
+
+        {"service": str, "metric": str, "window_minutes": int,
+         "points": [{"t": iso8601, "v": float}, ...]}
     """
-    raise NotImplementedError("read_metric: implemented in phase 2")
+    if metric not in _METRIC_MAP:
+        raise ValueError(f"Unknown metric {metric!r}. Choose one of: {sorted(_METRIC_MAP)}.")
 
+    if _fake_mode():
+        return fixtures.fake_metric(service, metric)
+
+    from google.cloud import monitoring_v3  # type: ignore
+
+    project = _project()
+    metric_type, aligner = _METRIC_MAP[metric]
+    client = monitoring_v3.MetricServiceClient()
+    end_seconds = int(dt.datetime.now(dt.timezone.utc).timestamp())
+    interval = monitoring_v3.TimeInterval(
+        {
+            "end_time": {"seconds": end_seconds},
+            "start_time": {"seconds": end_seconds - window_minutes * 60},
+        }
+    )
+    aggregation = monitoring_v3.Aggregation(
+        {
+            "alignment_period": {"seconds": 60},
+            "per_series_aligner": getattr(monitoring_v3.Aggregation.Aligner, aligner),
+        }
+    )
+    flt = (
+        f'metric.type = "{metric_type}" '
+        f'AND resource.labels.service_name = "{service}"'
+    )
+    series = client.list_time_series(
+        request={
+            "name": f"projects/{project}",
+            "filter": flt,
+            "interval": interval,
+            "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+            "aggregation": aggregation,
+        }
+    )
+    points: list[dict[str, Any]] = []
+    for ts in series:
+        for p in ts.points:
+            val = p.value.double_value or p.value.int64_value or 0
+            t = p.interval.end_time.isoformat() if p.interval.end_time else None
+            points.append({"t": t, "v": float(val)})
+    return {
+        "service": service,
+        "metric": metric,
+        "window_minutes": window_minutes,
+        "points": points,
+    }
+
+
+# ---------------------------------------------------------------------------
+# fetch_recent_traces
+# ---------------------------------------------------------------------------
+
+def fetch_recent_traces(service: str, window_minutes: int = 15) -> dict[str, Any]:
+    """Return recent traces involving ``service``.
+
+    Return shape::
+
+        {"service": str,
+         "traces": [{"trace_id": str,
+                     "spans": [{"name": str, "service": str, "ms": float}, ...]}]}
+    """
+    if _fake_mode():
+        return fixtures.fake_recent_traces(service)
+
+    from google.cloud import trace_v1  # type: ignore
+
+    project = _project()
+    client = trace_v1.TraceServiceClient()
+    end = dt.datetime.now(dt.timezone.utc)
+    start = end - dt.timedelta(minutes=window_minutes)
+    request = trace_v1.ListTracesRequest(
+        project_id=project,
+        start_time={"seconds": int(start.timestamp())},
+        end_time={"seconds": int(end.timestamp())},
+        page_size=10,
+        view=trace_v1.ListTracesRequest.ViewType.COMPLETE,
+    )
+    traces_out: list[dict[str, Any]] = []
+    for tr in client.list_traces(request=request):
+        spans = []
+        touches_service = False
+        for s in tr.spans:
+            svc = s.labels.get("g.co/r/k8s_pod/service") or s.labels.get("service.name", "")
+            if svc == service:
+                touches_service = True
+            ms = (s.end_time.timestamp_pb().nanos - s.start_time.timestamp_pb().nanos) / 1e6
+            spans.append({"name": s.name, "service": svc, "ms": ms})
+        if touches_service:
+            traces_out.append({"trace_id": tr.trace_id, "spans": spans})
+    return {"service": service, "traces": traces_out}
+
+
+# ---------------------------------------------------------------------------
+# list_dependency_edges
+# ---------------------------------------------------------------------------
 
 def list_dependency_edges(service: str) -> dict[str, Any]:
-    """Return downstream services ``service`` calls, derived from trace data.
+    """Return services that ``service`` calls downstream.
 
-    Used by the agent to walk from the alerting service toward the root cause.
-    Phase 2.
+    Derived from recent traces — caller -> callee edges where the caller's
+    ``service.name`` is ``service``. The agent uses this to walk the dep
+    graph in step 2 of the policy.
     """
-    raise NotImplementedError("list_dependency_edges: implemented in phase 2")
+    if _fake_mode():
+        return fixtures.fake_dependency_edges(service)
+
+    traces = fetch_recent_traces(service, window_minutes=30).get("traces", [])
+    callees: set[str] = set()
+    for tr in traces:
+        spans = tr.get("spans", [])
+        for i, span in enumerate(spans):
+            if span.get("service") != service:
+                continue
+            # Heuristic: the next-deeper span in the same trace is a callee.
+            for j in range(i + 1, len(spans)):
+                callee_svc = spans[j].get("service")
+                if callee_svc and callee_svc != service:
+                    callees.add(callee_svc)
+                    break
+    return {"service": service, "calls": sorted(callees)}
