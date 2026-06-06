@@ -149,6 +149,18 @@ def _result_preview(value: Any, limit: int = 240) -> str:
         return str(value)[:limit]
 
 
+import re
+
+
+def _extract_suspect_sha(text: str) -> str | None:
+    """Pull a 40-char or 8-char hex SHA out of agent narration."""
+    m = re.search(r"\b([0-9a-f]{40})\b", text)
+    if m:
+        return m.group(1)
+    m = re.search(r"\b([0-9a-f]{7,12})\b", text)
+    return m.group(1) if m else None
+
+
 async def _real_run(
     *,
     scenario: str,
@@ -160,6 +172,7 @@ async def _real_run(
     # Local imports so a missing ADK install only matters when we actually run.
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
+    from google.genai import types as genai_types
 
     from agent.agent import build_agent
 
@@ -172,22 +185,28 @@ async def _real_run(
         auto_create_session=True,
     )
 
-    # Send the agent the incident context and let the policy take over.
-    user_msg = (
+    user_msg_text = (
         f"Incident: service '{service}' is alerting over the last "
         f"{window_minutes} minutes. Scenario hint (offline replay only): "
         f"{scenario}. The project to investigate in GitLab is {project_id}. "
         "Follow the 8-step investigation policy. Stage a DRAFT rollback MR "
         "and stop for approval — do not merge."
     )
+    new_message = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=user_msg_text)],
+    )
 
     step_counter = 0
     seen_rollback = False
+    last_text = ""
+    last_suspect_sha: str | None = None
+    mr_create_failed = False
 
     async for event in runner.run_async(
         user_id="demo",
         session_id="demo",
-        new_message=user_msg,
+        new_message=new_message,
     ):
         # Tool calls
         try:
@@ -214,28 +233,40 @@ async def _real_run(
             preview = _result_preview(response)
             yield ToolResultEvent(name=name, result_preview=preview).to_dict()
 
-            # Auto-stage when the agent creates an MR via GitLab MCP.
-            if name == "create_merge_request" and isinstance(response, dict) and not seen_rollback:
-                mr_url = response.get("web_url") or response.get("url", "")
-                mr_iid = int(response.get("iid", 0) or 0)
-                issue_url = ""  # populated below if we just saw create_issue
-                sha = response.get("sha", "") or ""
-                rb = REGISTRY.stage(
-                    project_id=project_id,
-                    issue_url=issue_url,
-                    mr_url=mr_url,
-                    mr_iid=mr_iid,
-                    suspect_commit_sha=sha,
-                )
-                yield RollbackStagedEvent(
-                    rollback_id=rb.rollback_id,
-                    issue_url=issue_url,
-                    mr_url=mr_url,
-                    mr_iid=mr_iid,
-                    project_id=project_id,
-                    suspect_commit_sha=sha,
-                ).to_dict()
-                seen_rollback = True
+            if name == "create_merge_request":
+                # Treat string-encoded JSON payloads (zereight wrapper) the same.
+                parsed = response
+                if isinstance(response, dict) and "content" in response:
+                    parts = response.get("content") or []
+                    if parts and isinstance(parts, list):
+                        inner = parts[0].get("text") if isinstance(parts[0], dict) else None
+                        try:
+                            parsed = json.loads(inner) if isinstance(inner, str) else inner
+                        except Exception:
+                            parsed = None
+                if isinstance(parsed, dict) and parsed.get("iid") and not seen_rollback:
+                    mr_url = parsed.get("web_url") or parsed.get("url", "")
+                    mr_iid = int(parsed.get("iid"))
+                    sha = parsed.get("sha", "") or last_suspect_sha or ""
+                    rb = REGISTRY.stage(
+                        project_id=project_id,
+                        issue_url="",
+                        mr_url=mr_url,
+                        mr_iid=mr_iid,
+                        suspect_commit_sha=sha,
+                    )
+                    yield RollbackStagedEvent(
+                        rollback_id=rb.rollback_id,
+                        issue_url="",
+                        mr_url=mr_url,
+                        mr_iid=mr_iid,
+                        project_id=project_id,
+                        suspect_commit_sha=sha,
+                    ).to_dict()
+                    seen_rollback = True
+                else:
+                    # Agent's MR create failed (branch missing, etc.). Mark for fallback.
+                    mr_create_failed = True
 
         # Plain text narration
         text = _extract_text(getattr(event, "content", None))
@@ -244,13 +275,69 @@ async def _real_run(
             if not partial:
                 step_counter += 1
                 yield StepEvent(step=step_counter, text=text.strip()).to_dict()
+                last_text = text
+                last_suspect_sha = _extract_suspect_sha(text) or last_suspect_sha
 
         if hasattr(event, "is_final_response"):
             try:
                 if event.is_final_response():
+                    last_text = text or last_text
+                    if text:
+                        last_suspect_sha = _extract_suspect_sha(text) or last_suspect_sha
                     yield FinalEvent(summary=text.strip() or "Investigation complete.").to_dict()
             except Exception:
                 pass
+
+    # Fallback: if agent named a suspect but could not stage the MR via MCP,
+    # finish the job with a direct GitLab REST revert + draft MR. Step 7 of the
+    # policy must complete deterministically.
+    if not seen_rollback and last_suspect_sha:
+        try:
+            from .gitlab_actions import open_draft_mr_via_rest, revert_commit_via_rest
+            import os as _os
+            from urllib.parse import quote
+
+            short = last_suspect_sha[:8]
+            revert_branch = f"faultline-revert-{short}"
+
+            # Step a: create the revert commit + branch.
+            revert_resp = await revert_commit_via_rest(project_id, last_suspect_sha, revert_branch)
+
+            # Step b: open the draft MR.
+            mr_resp = await open_draft_mr_via_rest(
+                project_id,
+                source_branch=revert_branch,
+                target_branch=_os.getenv("GITLAB_DEFAULT_BRANCH", "main"),
+                title=f"Revert {short}",
+                description=(
+                    f"Auto-staged by Faultline. Reverts suspect commit "
+                    f"`{last_suspect_sha}` identified during investigation of "
+                    f"`{service}`."
+                ),
+            )
+
+            mr_url = mr_resp.get("web_url", "")
+            mr_iid = int(mr_resp.get("iid", 0) or 0)
+            rb = REGISTRY.stage(
+                project_id=project_id,
+                issue_url="",
+                mr_url=mr_url,
+                mr_iid=mr_iid,
+                suspect_commit_sha=last_suspect_sha,
+            )
+            yield RollbackStagedEvent(
+                rollback_id=rb.rollback_id,
+                issue_url="",
+                mr_url=mr_url,
+                mr_iid=mr_iid,
+                project_id=project_id,
+                suspect_commit_sha=last_suspect_sha,
+            ).to_dict()
+        except Exception as exc:
+            log.exception("post-investigation REST fallback failed")
+            yield ErrorEvent(
+                message=f"Could not auto-stage rollback MR: {type(exc).__name__}: {exc}"
+            ).to_dict()
 
 
 # ---------------------------------------------------------------------------

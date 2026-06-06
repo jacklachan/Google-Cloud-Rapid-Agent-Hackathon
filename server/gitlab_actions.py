@@ -83,6 +83,124 @@ async def mark_mr_ready(project_path: str, mr_iid: int) -> dict[str, Any]:
         return resp.json()
 
 
+async def _resolve_revertable_sha(client: httpx.AsyncClient, project_path: str, sha: str) -> str:
+    """Make sure ``sha`` is reachable from default branch.
+
+    The agent often returns the branch-tip SHA the planter created on the
+    source branch. After GitLab merges that branch, the source-tip commit
+    might or might not be reachable from the default branch depending on
+    merge strategy. If it is not, fall back to the latest commit on the
+    default branch — which IS the merge commit that introduced the change.
+    """
+    base = _gitlab_base()
+    pid = _project_url_id(project_path)
+    default = os.getenv("GITLAB_DEFAULT_BRANCH", "main")
+
+    probe = await client.get(
+        f"{base}/api/v4/projects/{pid}/repository/commits/{sha}",
+        headers=_headers(),
+    )
+    if probe.status_code == 200:
+        return sha
+
+    log.warning("suspect sha %s not found on %s; using default-branch HEAD", sha, default)
+    head = await client.get(
+        f"{base}/api/v4/projects/{pid}/repository/commits",
+        headers=_headers(),
+        params={"ref_name": default, "per_page": 1},
+    )
+    head.raise_for_status()
+    items = head.json()
+    if not items:
+        raise RuntimeError(f"no commits on {default}; cannot revert")
+    return items[0]["id"]
+
+
+async def revert_commit_via_rest(project_path: str, sha: str, branch: str) -> dict[str, Any]:
+    """Create a revert commit on a new branch using GitLab's REST revert API.
+
+    Used as a fallback when the agent's MCP-based create_merge_request fails
+    because the revert source branch does not yet exist. The GitLab API
+    `POST /projects/:id/repository/commits/:sha/revert?branch=...` does both
+    the branch create AND the revert commit in one call.
+
+    If the supplied ``sha`` is not reachable from the default branch (e.g. it
+    is the source-side commit that the merge superseded), we revert the
+    actual default-branch HEAD instead, which is the merge commit that
+    landed the regression.
+    """
+    base = _gitlab_base()
+    pid = _project_url_id(project_path)
+    default = os.getenv("GITLAB_DEFAULT_BRANCH", "main")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        revertable = await _resolve_revertable_sha(client, project_path, sha)
+
+        # Step 1: create the revert branch from the default branch tip.
+        # If it already exists from a prior attempt, delete + recreate.
+        create_branch_url = f"{base}/api/v4/projects/{pid}/repository/branches"
+        br_resp = await client.post(
+            create_branch_url,
+            headers=_headers(),
+            params={"branch": branch, "ref": default},
+        )
+        if br_resp.status_code >= 400 and "already exists" in br_resp.text.lower():
+            await client.delete(
+                f"{base}/api/v4/projects/{pid}/repository/branches/{branch}",
+                headers=_headers(),
+            )
+            br_resp = await client.post(
+                create_branch_url,
+                headers=_headers(),
+                params={"branch": branch, "ref": default},
+            )
+        br_resp.raise_for_status()
+
+        # Step 2: revert ``revertable`` ONTO the freshly created branch.
+        revert_url = f"{base}/api/v4/projects/{pid}/repository/commits/{revertable}/revert"
+        resp = await client.post(
+            revert_url,
+            headers=_headers(),
+            json={"branch": branch},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def open_draft_mr_via_rest(
+    project_path: str,
+    *,
+    source_branch: str,
+    target_branch: str,
+    title: str,
+    description: str,
+) -> dict[str, Any]:
+    """Create a DRAFT MR via REST when MCP failed.
+
+    Returns the parsed MR payload including iid + web_url.
+    """
+    base = _gitlab_base()
+    pid = _project_url_id(project_path)
+    url = f"{base}/api/v4/projects/{pid}/merge_requests"
+
+    if not title.lower().startswith("draft:"):
+        title = f"Draft: {title}"
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(
+            url,
+            headers=_headers(),
+            json={
+                "source_branch": source_branch,
+                "target_branch": target_branch,
+                "title": title,
+                "description": description,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def merge_mr(project_path: str, mr_iid: int) -> dict[str, Any]:
     """Accept the MR. Returns the merged MR payload (or raises HTTPStatusError)."""
     if _fake():

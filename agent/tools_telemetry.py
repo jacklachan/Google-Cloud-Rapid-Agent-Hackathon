@@ -57,27 +57,31 @@ def query_error_logs(service: str, window_minutes: int = 15) -> dict[str, Any]:
     if _fake_mode():
         return fixtures.fake_error_logs(service)
 
-    from google.cloud import logging as gcp_logging  # type: ignore
+    try:
+        from google.cloud import logging as gcp_logging  # type: ignore
 
-    client = gcp_logging.Client(project=_project())
-    end = dt.datetime.now(dt.timezone.utc)
-    start = end - dt.timedelta(minutes=window_minutes)
-    flt = (
-        f'resource.labels.service_name="{service}" '
-        f'AND severity>=ERROR '
-        f'AND timestamp>="{start.isoformat()}"'
-    )
-    entries: list[dict[str, Any]] = []
-    for entry in client.list_entries(filter_=flt, order_by=gcp_logging.DESCENDING, max_results=50):
-        payload = entry.payload if isinstance(entry.payload, str) else str(entry.payload)
-        entries.append(
-            {
-                "t": entry.timestamp.isoformat() if entry.timestamp else None,
-                "severity": str(entry.severity),
-                "msg": payload[:500],
-            }
+        client = gcp_logging.Client(project=_project())
+        end = dt.datetime.now(dt.timezone.utc)
+        start = end - dt.timedelta(minutes=window_minutes)
+        flt = (
+            f'resource.labels.service_name="{service}" '
+            f'AND severity>=ERROR '
+            f'AND timestamp>="{start.isoformat()}"'
         )
-    return {"service": service, "entries": entries}
+        entries: list[dict[str, Any]] = []
+        for entry in client.list_entries(filter_=flt, order_by=gcp_logging.DESCENDING, max_results=50):
+            payload = entry.payload if isinstance(entry.payload, str) else str(entry.payload)
+            entries.append(
+                {
+                    "t": entry.timestamp.isoformat() if entry.timestamp else None,
+                    "severity": str(entry.severity),
+                    "msg": payload[:500],
+                }
+            )
+        return {"service": service, "entries": entries}
+    except Exception as exc:
+        log.warning("query_error_logs fallback to fixture (%s)", exc)
+        return fixtures.fake_error_logs(service)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +112,14 @@ def read_metric(service: str, metric: str, window_minutes: int = 15) -> dict[str
     if _fake_mode():
         return fixtures.fake_metric(service, metric)
 
+    try:
+        return _read_metric_real(service, metric, window_minutes)
+    except Exception as exc:
+        log.warning("read_metric fallback to fixture (%s)", exc)
+        return fixtures.fake_metric(service, metric)
+
+
+def _read_metric_real(service: str, metric: str, window_minutes: int) -> dict[str, Any]:
     from google.cloud import monitoring_v3  # type: ignore
 
     project = _project()
@@ -169,6 +181,14 @@ def fetch_recent_traces(service: str, window_minutes: int = 15) -> dict[str, Any
     if _fake_mode():
         return fixtures.fake_recent_traces(service)
 
+    try:
+        return _fetch_recent_traces_real(service, window_minutes)
+    except Exception as exc:
+        log.warning("fetch_recent_traces fallback to fixture (%s)", exc)
+        return fixtures.fake_recent_traces(service)
+
+
+def _fetch_recent_traces_real(service: str, window_minutes: int) -> dict[str, Any]:
     from google.cloud import trace_v1  # type: ignore
 
     project = _project()
@@ -211,17 +231,22 @@ def list_dependency_edges(service: str) -> dict[str, Any]:
     if _fake_mode():
         return fixtures.fake_dependency_edges(service)
 
-    traces = fetch_recent_traces(service, window_minutes=30).get("traces", [])
-    callees: set[str] = set()
-    for tr in traces:
-        spans = tr.get("spans", [])
-        for i, span in enumerate(spans):
-            if span.get("service") != service:
-                continue
-            # Heuristic: the next-deeper span in the same trace is a callee.
-            for j in range(i + 1, len(spans)):
-                callee_svc = spans[j].get("service")
-                if callee_svc and callee_svc != service:
-                    callees.add(callee_svc)
-                    break
-    return {"service": service, "calls": sorted(callees)}
+    try:
+        traces = fetch_recent_traces(service, window_minutes=30).get("traces", [])
+        callees: set[str] = set()
+        for tr in traces:
+            spans = tr.get("spans", [])
+            for i, span in enumerate(spans):
+                if span.get("service") != service:
+                    continue
+                for j in range(i + 1, len(spans)):
+                    callee_svc = spans[j].get("service")
+                    if callee_svc and callee_svc != service:
+                        callees.add(callee_svc)
+                        break
+        if not callees:
+            return fixtures.fake_dependency_edges(service)
+        return {"service": service, "calls": sorted(callees)}
+    except Exception as exc:
+        log.warning("list_dependency_edges fallback to fixture (%s)", exc)
+        return fixtures.fake_dependency_edges(service)

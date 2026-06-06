@@ -3,6 +3,9 @@
 # --- Agent runtime ---------------------------------------------------------
 google-adk>=0.5.0
 google-cloud-aiplatform>=1.60.0
+# Python MCP SDK. google-adk's McpToolset uses it but does not pin it as
+# a runtime dep, so we add it explicitly here.
+mcp>=1.0.0
 
 # --- Google Cloud observability reads --------------------------------------
 google-cloud-logging>=3.10.0
