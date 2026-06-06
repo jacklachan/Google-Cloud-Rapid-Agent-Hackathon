@@ -1,19 +1,28 @@
 # Faultline
 
+[![tests](https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon/actions/workflows/tests.yml/badge.svg)](https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Gemini 2.5 Flash](https://img.shields.io/badge/LLM-Gemini%202.5%20Flash%20%E2%80%A2%20Vertex%20AI-4285F4)](https://cloud.google.com/vertex-ai)
+[![Google ADK](https://img.shields.io/badge/Orchestration-Google%20ADK-34A853)](https://github.com/google/adk-python)
+[![GitLab MCP](https://img.shields.io/badge/Integration-GitLab%20MCP%20(official)-FC6D26)](https://docs.gitlab.com/user/gitlab_duo/model_context_protocol/)
 
-**Live incident root-cause investigation agent.**
+> **Production just broke. On-call wastes 10 minutes finding which service is at fault and which commit caused it. Faultline does it in seconds — autonomous Gemini agent, GitLab MCP load-bearing, human-gated rollback.**
+
+Submitted to the **Google Cloud Rapid Agent Hackathon — GitLab track**.
+See **[SUBMISSION.md](SUBMISSION.md)** for the full writeup and **[DEMO.md](DEMO.md)** for the 3-minute demo script.
+
+---
+
+## What it does
 
 When a production service breaks, Faultline autonomously:
 
 1. Reads Google Cloud telemetry (Logging / Trace / Monitoring) to identify what broke.
 2. Walks the service dependency graph to find the **root** cause, not just the first red service.
-3. Pulls recent GitLab commits & diffs via the official GitLab MCP server.
-4. Matches the failure symptom (latency creep / 5xx spike / OOM) to the diff type and converges on **one** most-likely offending commit.
+3. Pulls recent GitLab commits + diffs via the **official GitLab MCP server**.
+4. Matches the failure symptom (latency creep / 5xx spike / OOM) to the diff *type* and converges on **one** most-likely offending commit.
 5. Drafts a blameless postmortem, opens a GitLab issue linking the suspect commit, and stages a **DRAFT** rollback merge request.
-6. **Stops.** A human reviews and clicks Approve before anything merges.
-
-Built for the **Google Cloud Rapid Agent Hackathon — GitLab track**.
+6. **Stops.** A human reviews and clicks Approve before anything merges. Merge fires the victim's GitLab CI, which redeploys the reverted code to Cloud Run. Recovery in under a minute.
 
 ---
 
@@ -80,26 +89,53 @@ requirements.txt   Python deps
 LICENSE            MIT
 ```
 
-## Setup (work in progress — phase 0 scaffold)
+## Quickstart
 
-Prereqs: Python 3.11+, `gcloud` CLI, a GCP project with Vertex AI + Cloud Logging/Trace/Monitoring APIs enabled, a GitLab account with a project + personal access token, a GitHub repo to host this code.
+Prereqs: Python 3.11+, `gcloud` CLI, a GCP project with Vertex AI + Cloud Logging/Trace/Monitoring APIs enabled, a GitLab account with a project + personal access token.
 
 ```powershell
 # 1. clone + venv
-git clone <your-fork>.git
+git clone https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon.git faultline
 cd faultline
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
 # 2. copy env, fill in values (NEVER commit .env)
-copy .env.example .env
-# edit .env
+Copy-Item .env.example .env
+notepad .env   # GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, GITLAB_PROJECT_PATH, GITLAB_TOKEN
 
-# 3. (later phases) auth gcloud + run server
+# 3. auth gcloud
 gcloud auth application-default login
+gcloud services enable aiplatform.googleapis.com run.googleapis.com `
+  cloudbuild.googleapis.com artifactregistry.googleapis.com `
+  logging.googleapis.com cloudtrace.googleapis.com monitoring.googleapis.com
+
+# 4. run locally (full mode)
+uvicorn server.main:app --reload
+
+# OR run locally with everything faked (no GCP / GitLab needed)
+$env:FAULTLINE_FAKE_AGENT='1'; $env:FAULTLINE_FAKE_TELEMETRY='1'
 uvicorn server.main:app --reload
 ```
+
+### Deploy to Cloud Run
+
+```bash
+# from git-bash / WSL
+bash victim_service/deploy_cloudrun.sh    # the demo victim
+bash deploy_server_cloudrun.sh            # Faultline itself
+```
+
+### Run the demo
+
+```bash
+python -m scripts.plant_regression --scenario n_plus_one
+python -m victim_service.load_gen --url <frontend-url> --rps 5 --duration 180
+# Now open the Faultline URL in a browser, click Start, then Approve.
+```
+
+See [DEMO.md](DEMO.md) for the full timed walkthrough.
 
 ## Deploying the victim service
 
