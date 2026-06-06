@@ -1,12 +1,12 @@
 # GitLab CI for the victim service.
 #
-# When the human clicks "Approve" in the Faultline console, Faultline merges
-# the draft rollback MR via the GitLab MCP toolset. This pipeline then redeploys
-# the reverted code to Cloud Run, which is what makes "<1 minute recovery"
-# possible.
+# When the human clicks Approve in the Faultline console, Faultline merges the
+# DRAFT rollback MR via GitLab MCP. This pipeline then redeploys the reverted
+# code to Cloud Run, which is what gives the "<1 minute recovery" demo.
 #
-# Phase 1 fills in real Cloud Run deploy steps once a workload-identity-
-# federated GitLab CI <-> GCP service account is set up. Phase 0 = placeholder.
+# Phase 1: skeleton with the gcloud auth + deploy commands stubbed against
+# Workload Identity Federation. Phase 7 will wire the WIF setup and turn this
+# job on.
 
 stages:
   - deploy
@@ -17,7 +17,17 @@ deploy_to_cloud_run:
   rules:
     # Only redeploy on default-branch pushes (i.e. after MR merge).
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    # Set these in the GitLab project's CI/CD variables UI before phase 7 demo.
+    GOOGLE_CLOUD_PROJECT: $GCP_PROJECT
+    GOOGLE_CLOUD_REGION: $GCP_REGION
+    REGRESSION_MODE: ""
   script:
-    - echo "Phase 0 scaffold. Phase 1 will authenticate via Workload Identity"
-    - echo "Federation and run: gcloud builds submit + gcloud run deploy."
-    - exit 0
+    - |
+      if [ -z "$WIF_PROVIDER" ] || [ -z "$WIF_SERVICE_ACCOUNT" ]; then
+        echo "phase-1 placeholder: GitLab CI -> Cloud Run deploy not wired yet."
+        echo "Set WIF_PROVIDER + WIF_SERVICE_ACCOUNT (phase 7) to enable."
+        exit 0
+      fi
+    - echo "(phase 7) gcloud auth via Workload Identity Federation here"
+    - echo "(phase 7) bash victim_service/deploy_cloudrun.sh"

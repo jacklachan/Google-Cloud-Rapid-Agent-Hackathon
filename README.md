@@ -79,6 +79,41 @@ gcloud auth application-default login
 uvicorn server.main:app --reload
 ```
 
+## Deploying the victim service
+
+Phase 1 ships a 3-stage chain (`frontend` → `auth` → `data`) packaged as a
+single Docker image. The `SERVICE_NAME` env var picks which role runs, so the
+same image becomes three distinct Cloud Run services with their own URLs and
+their own `service.name` in Cloud Trace.
+
+```bash
+# from git-bash / WSL on Windows
+export GOOGLE_CLOUD_PROJECT=advance-casing-498313-t1
+export GOOGLE_CLOUD_REGION=us-central1
+bash victim_service/deploy_cloudrun.sh
+```
+
+Trigger a bug class at deploy time by setting `REGRESSION_MODE` to one of:
+
+| value         | symptom class            | what it does                      |
+|---------------|--------------------------|-----------------------------------|
+| `n_plus_one`  | latency creep            | 25 sequential 8ms "queries"       |
+| `slow_query`  | latency creep            | one 600ms blocking call           |
+| `bad_dep`     | sudden 5xx spike         | raises on every request           |
+| `leaky`       | memory growth / OOM      | retains 1 MiB per request         |
+| *(unset)*     | clean                    | normal behaviour                  |
+
+In a real Faultline run, the suspect commit is the GitLab commit that flips
+this env var (or imports a new dep that triggers a path here). Faultline's
+job is to read the telemetry, identify the symptom class, read the recent
+diffs, and converge on the commit that changed `REGRESSION_MODE`.
+
+Drive traffic from your laptop with:
+
+```bash
+python -m victim_service.load_gen --url https://faultline-victim-frontend-xxxxx.run.app/ --rps 5 --duration 120
+```
+
 ## Investigation policy
 
 The agent's behaviour is governed by a fixed 8-step policy baked verbatim into the system prompt at [agent/prompt.py](agent/prompt.py). It does **not** improvise. It always halts before merging.
@@ -86,7 +121,7 @@ The agent's behaviour is governed by a fixed 8-step policy baked verbatim into t
 ## Build phases
 
 - [x] **Phase 0** — scaffold, MIT license, env contract, README skeleton.
-- [ ] Phase 1 — victim_service + OpenTelemetry + Cloud Run deploy.
+- [x] **Phase 1** — victim_service (3-role FastAPI chain, one image), OpenTelemetry, Dockerfile, Cloud Run deploy script, regression toggle.
 - [ ] Phase 2 — telemetry read tools (with fake/local mode).
 - [ ] Phase 3 — GitLab MCP toolset wiring; round-trip issue + draft MR.
 - [ ] Phase 4 — Gemini ADK agent + investigation policy as system prompt.

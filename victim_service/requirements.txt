@@ -1,0 +1,12 @@
+# Runtime deps for the victim service container only. Smaller than the
+# top-level requirements.txt so the image stays small.
+
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+httpx>=0.27.0
+
+# OpenTelemetry SDK + GCP exporter + auto-instrumentation.
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-gcp-trace>=1.7.0
+opentelemetry-instrumentation-fastapi>=0.46b0
+opentelemetry-instrumentation-httpx>=0.46b0
