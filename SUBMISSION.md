@@ -39,7 +39,7 @@ The web console renders each step live as the agent emits it. When the human cli
 |---|---|---|
 | Reasoning LLM | **Gemini 2.5 Flash** on Vertex AI | hackathon rule 1; Flash is the cheapest GA Gemini 2.5 (free-tier friendly) and supports the function calling + MCP tools we need |
 | Orchestration | **Google ADK** (`google-adk` Python) | hackathon rule 2; ADK's `McpToolset` is what connects us to GitLab |
-| Partner integration | **Official GitLab MCP server** (`<gitlab>/api/v4/mcp`) via ADK `McpToolset` + `StreamableHTTPConnectionParams` + `PRIVATE-TOKEN` header | hackathon rule 3; both reads (commits/diffs) and writes (issue/MR) flow through MCP |
+| Partner integration | **GitLab MCP server** via ADK `McpToolset` + stdio. Community `@zereight/mcp-gitlab` (the de-facto GitLab MCP for free-tier projects — GitLab's own MCP endpoint at `<gitlab>/api/v4/mcp` is Ultimate-tier on group namespaces only). | hackathon rule 3; both reads (commits/diffs) and writes (issue/MR/merge) flow through MCP |
 | Observability | **Cloud Logging / Trace / Monitoring** | hackathon rule 4; OpenTelemetry instruments the victim service and exports to Cloud Trace |
 | Compute | **Cloud Run** | minimal-ops, scale-to-zero free tier; one image / three roles for the victim |
 | Server | **FastAPI** + Server-Sent Events | streams the agent's step-by-step reasoning live to the UI |
@@ -49,12 +49,13 @@ The web console renders each step live as the agent emits it. When the human cli
 
 The agent cannot complete an investigation without GitLab MCP. Steps 3, 4, and 7 of the policy all call MCP tools:
 
-- `search` (scope=commits) — find recent commits on the suspect service
-- `get_merge_request_commits` and `get_merge_request_diffs` — read what changed
+- `list_commits` — find recent commits on the suspect service
+- `get_merge_request` and `get_merge_request_diffs` — read what changed
 - `create_issue` — post the blameless postmortem
 - `create_merge_request` (draft=true) — stage the rollback
+- `merge_merge_request` — used by `/approve` (the human-gated rollback)
 
-The terminal merge — which fires the redeploy — is a plain GitLab REST call (`PUT /merge_requests/:iid/merge`), because the published MCP tool list does not include a merge tool. Rule 3 calls out reads + issue/MR-creation specifically; both go through MCP.
+All six tools flow through the community `@zereight/mcp-gitlab` server, launched as a stdio child process by ADK's `McpToolset(connection_params=StdioConnectionParams(...))`. The MCP server reads `GITLAB_PERSONAL_ACCESS_TOKEN` + `GITLAB_API_URL` from its environment to authenticate.
 
 ## How we comply with the hackathon rules
 
@@ -62,7 +63,7 @@ The terminal merge — which fires the redeploy — is a plain GitLab REST call 
 |---|---|
 | 1. Runtime LLM must be Gemini via Vertex AI | Only one LLM call site: `agent/agent.py` builds an ADK `LlmAgent(model="gemini-2.5-flash", ...)` with `GOOGLE_GENAI_USE_VERTEXAI=true`. No other LLM is imported anywhere. |
 | 2. Orchestrate with Google ADK / Agent Builder | `google-adk` drives the whole agent loop. ADK `Runner`, `LlmAgent`, `McpToolset`, `InMemorySessionService`. |
-| 3. Load-bearing GitLab MCP integration | All commit reads + issue/MR creation go through the official GitLab MCP server, configured via `McpToolset(connection_params=StreamableHTTPConnectionParams(url=<gitlab>/api/v4/mcp, headers={"PRIVATE-TOKEN": ...}))`. |
+| 3. Load-bearing GitLab MCP integration | All commit reads, issue + MR creation, AND the approval-gated merge go through the community `@zereight/mcp-gitlab` server via `McpToolset(connection_params=StdioConnectionParams(...))`. (GitLab's first-party `<gitlab>/api/v4/mcp` endpoint is Ultimate-tier on group namespaces only — not available on a free-tier personal project.) |
 | 4. Google Cloud observability only | `opentelemetry-exporter-gcp-trace` from the victim; `google-cloud-logging` / `monitoring_v3` / `trace_v1` from the agent's read tools. No Datadog/Elastic/etc. |
 | 5. Original code only | New repo, no prior code imported. Verified by `git log` — first commit is the MIT license + scaffold. |
 | 6. Public + MIT in first commit | `LICENSE` (MIT) shipped in commit `6de412e` alongside the README. Repo is public. |

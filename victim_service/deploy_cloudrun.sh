@@ -41,17 +41,13 @@ if ! gcloud artifacts repositories describe "${REPO}" \
 fi
 
 # ---- 2. build + push image with Cloud Build --------------------------------
-echo ">>> building ${IMAGE}"
 # Build context = repo root so the Dockerfile can `COPY victim_service ...`.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-gcloud builds submit "${REPO_ROOT}" \
-  --tag="${IMAGE}" \
-  --config=/dev/null \
-  -- \
-  --substitutions=_DOCKERFILE=victim_service/Dockerfile 2>/dev/null || \
-gcloud builds submit "${REPO_ROOT}" \
-  --tag="${IMAGE}" \
-  --file=victim_service/Dockerfile
+echo ">>> building ${IMAGE} (context=${REPO_ROOT})"
+( cd "${REPO_ROOT}" && \
+  gcloud builds submit . \
+    --config=victim_service/cloudbuild.yaml \
+    --substitutions="_IMAGE=${IMAGE}" )
 
 # ---- 3. deploy three Cloud Run services from the same image ----------------
 deploy_one() {

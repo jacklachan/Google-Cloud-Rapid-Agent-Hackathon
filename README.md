@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Gemini 2.5 Flash](https://img.shields.io/badge/LLM-Gemini%202.5%20Flash%20%E2%80%A2%20Vertex%20AI-4285F4)](https://cloud.google.com/vertex-ai)
 [![Google ADK](https://img.shields.io/badge/Orchestration-Google%20ADK-34A853)](https://github.com/google/adk-python)
-[![GitLab MCP](https://img.shields.io/badge/Integration-GitLab%20MCP%20(official)-FC6D26)](https://docs.gitlab.com/user/gitlab_duo/model_context_protocol/)
+[![GitLab MCP](https://img.shields.io/badge/Integration-GitLab%20MCP-FC6D26)](https://github.com/zereight/gitlab-mcp)
 
 > **Production just broke. On-call wastes 10 minutes finding which service is at fault and which commit caused it. Faultline does it in seconds — autonomous Gemini agent, GitLab MCP load-bearing, human-gated rollback.**
 
@@ -265,7 +265,7 @@ Click **Approve rollback** in the console. Faultline strips the `Draft:` prefix,
 - [x] **Phase 0** — scaffold, MIT license, env contract, README skeleton.
 - [x] **Phase 1** — victim_service (3-role FastAPI chain, one image), OpenTelemetry, Dockerfile, Cloud Run deploy script, regression toggle.
 - [x] **Phase 2** — telemetry read tools (Cloud Logging/Trace/Monitoring) with `FAULTLINE_FAKE_TELEMETRY=1` fixture mode keyed by `FAULTLINE_FAKE_SCENARIO`.
-- [x] **Phase 3** — GitLab MCP toolset (`McpToolset` + `StreamableHTTPConnectionParams` on `<gitlab>/api/v4/mcp` with `PRIVATE-TOKEN` header). Tool allowlist limited to `search`, `get_merge_request_commits`, `get_merge_request_diffs`, `get_merge_request`, `create_issue`, `create_merge_request`. Live de-risk via `python -m scripts.gitlab_smoke`.
+- [x] **Phase 3** — GitLab MCP toolset (`McpToolset` + `StdioConnectionParams` launching `npx -y @zereight/mcp-gitlab`). Tool allowlist: `list_commits`, `get_merge_request`, `get_merge_request_diffs`, `list_merge_requests`, `create_issue`, `create_merge_request`, `merge_merge_request`. Live de-risk via `python -m scripts.gitlab_smoke`. (GitLab's first-party MCP server is Ultimate-tier; community `@zereight/mcp-gitlab` works on free-tier projects.)
 - [x] **Phase 4** — Gemini ADK `LlmAgent` factory wiring `gemini-2.5-flash` on Vertex AI + `INVESTIGATION_POLICY` as system prompt + telemetry function tools + GitLab MCP toolset.
 - [x] **Phase 5** — FastAPI server: `POST /investigate` (SSE), `GET /pending`, `POST /approve/{rb}` stub, in-memory rollback registry. `FAULTLINE_FAKE_AGENT=1` switches to a canned step sequence for offline UI dev.
 - [x] **Phase 6** — web console: form-driven incident setup, live SSE stream renders one card per event type, rollback card with deep links to issue + draft MR and an Approve button. Vanilla HTML/JS/CSS, no build step.

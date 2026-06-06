@@ -1,9 +1,9 @@
 """Tests for tools_gitlab.py (no live GitLab calls).
 
-These verify the toolset wiring — endpoint URL, header injection, transport
-selection, and the tool allowlist — by patching the ADK MCPToolset / connection
-classes. The actual MCP round-trip is exercised by scripts/gitlab_smoke.py
-(which the user runs once a real token lives in .env).
+These verify the toolset wiring — API URL, env-var injection into the child
+MCP process, and the tool allowlist — by patching the ADK MCP classes. The
+actual MCP round-trip is exercised by scripts/gitlab_smoke.py against a real
+GitLab project.
 """
 
 from __future__ import annotations
@@ -17,11 +17,6 @@ from unittest.mock import MagicMock
 import pytest
 
 
-# We need to stub the google.adk + mcp modules before importing tools_gitlab,
-# because Python 3.14 may not have the full ADK stack installed in this venv.
-# The stubs let us assert on the parameters tools_gitlab passes through.
-
-
 def _install_stubs() -> dict[str, MagicMock]:
     """Install minimal google.adk + mcp stubs. Return the mock objects."""
     captured: dict[str, MagicMock] = {}
@@ -31,30 +26,27 @@ def _install_stubs() -> dict[str, MagicMock]:
     mcp_mod.StdioServerParameters = MagicMock(name="StdioServerParameters")
     captured["StdioServerParameters"] = mcp_mod.StdioServerParameters
 
-    # google.adk.tools.mcp_tool.mcp_session_manager.{StreamableHTTPConnectionParams,StdioConnectionParams}
+    # google.adk.tools.mcp_tool.mcp_toolset.McpToolset
+    # google.adk.tools.mcp_tool.mcp_session_manager.StdioConnectionParams
     g = types.ModuleType("google")
     g_adk = types.ModuleType("google.adk")
     g_adk_tools = types.ModuleType("google.adk.tools")
     g_adk_tools_mcp = types.ModuleType("google.adk.tools.mcp_tool")
+    g_adk_tools_mcp_toolset = types.ModuleType("google.adk.tools.mcp_tool.mcp_toolset")
     g_adk_tools_mcp_mgr = types.ModuleType(
         "google.adk.tools.mcp_tool.mcp_session_manager"
     )
-    g_adk_tools_mcp_mgr.StreamableHTTPConnectionParams = MagicMock(
-        name="StreamableHTTPConnectionParams"
-    )
+    g_adk_tools_mcp_toolset.McpToolset = MagicMock(name="McpToolset")
     g_adk_tools_mcp_mgr.StdioConnectionParams = MagicMock(name="StdioConnectionParams")
-    g_adk_tools_mcp.McpToolset = MagicMock(name="McpToolset")
-    captured["StreamableHTTPConnectionParams"] = (
-        g_adk_tools_mcp_mgr.StreamableHTTPConnectionParams
-    )
     captured["StdioConnectionParams"] = g_adk_tools_mcp_mgr.StdioConnectionParams
-    captured["McpToolset"] = g_adk_tools_mcp.McpToolset
+    captured["McpToolset"] = g_adk_tools_mcp_toolset.McpToolset
 
     sys.modules["mcp"] = mcp_mod
     sys.modules["google"] = g
     sys.modules["google.adk"] = g_adk
     sys.modules["google.adk.tools"] = g_adk_tools
     sys.modules["google.adk.tools.mcp_tool"] = g_adk_tools_mcp
+    sys.modules["google.adk.tools.mcp_tool.mcp_toolset"] = g_adk_tools_mcp_toolset
     sys.modules["google.adk.tools.mcp_tool.mcp_session_manager"] = g_adk_tools_mcp_mgr
     return captured
 
@@ -63,8 +55,6 @@ def _install_stubs() -> dict[str, MagicMock]:
 def _isolate_env(monkeypatch):
     monkeypatch.setenv("GITLAB_TOKEN", "glpat-test-fake")
     monkeypatch.delenv("GITLAB_URL", raising=False)
-    monkeypatch.delenv("GITLAB_MCP_TRANSPORT", raising=False)
-    # Force a fresh import of tools_gitlab each test.
     sys.modules.pop("agent.tools_gitlab", None)
     yield
 
@@ -73,17 +63,17 @@ def _fresh_import():
     return importlib.import_module("agent.tools_gitlab")
 
 
-def test_endpoint_defaults_to_gitlab_com(monkeypatch):
+def test_api_url_default():
     _install_stubs()
     mod = _fresh_import()
-    assert mod.gitlab_mcp_endpoint() == "https://gitlab.com/api/v4/mcp"
+    assert mod.gitlab_api_url() == "https://gitlab.com/api/v4"
 
 
-def test_endpoint_respects_custom_gitlab_url(monkeypatch):
+def test_api_url_respects_custom_gitlab_url(monkeypatch):
     monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com/")
     _install_stubs()
     mod = _fresh_import()
-    assert mod.gitlab_mcp_endpoint() == "https://gitlab.example.com/api/v4/mcp"
+    assert mod.gitlab_api_url() == "https://gitlab.example.com/api/v4"
 
 
 def test_missing_token_raises(monkeypatch):
@@ -94,51 +84,55 @@ def test_missing_token_raises(monkeypatch):
         mod.build_gitlab_toolset()
 
 
-def test_http_transport_passes_private_token_header():
-    captured = _install_stubs()
-    mod = _fresh_import()
-    mod.build_gitlab_toolset()
-
-    captured["StreamableHTTPConnectionParams"].assert_called_once()
-    kwargs = captured["StreamableHTTPConnectionParams"].call_args.kwargs
-    assert kwargs["url"] == "https://gitlab.com/api/v4/mcp"
-    assert kwargs["headers"] == {"PRIVATE-TOKEN": "glpat-test-fake"}
-
-
-def test_http_transport_filters_to_allowlist():
-    captured = _install_stubs()
-    mod = _fresh_import()
-    mod.build_gitlab_toolset()
-
-    captured["McpToolset"].assert_called_once()
-    kwargs = captured["McpToolset"].call_args.kwargs
-    assert kwargs["tool_filter"] == list(mod.GITLAB_TOOL_ALLOWLIST)
-    # Sanity: allowlist contains the four critical ops + the diff reader.
-    assert "create_issue" in kwargs["tool_filter"]
-    assert "create_merge_request" in kwargs["tool_filter"]
-    assert "get_merge_request_diffs" in kwargs["tool_filter"]
-    assert "search" in kwargs["tool_filter"]
-
-
-def test_stdio_transport_uses_mcp_remote(monkeypatch):
-    monkeypatch.setenv("GITLAB_MCP_TRANSPORT", "stdio")
+def test_stdio_launches_zereight_via_npx():
     captured = _install_stubs()
     mod = _fresh_import()
     mod.build_gitlab_toolset()
 
     captured["StdioServerParameters"].assert_called_once()
     kwargs = captured["StdioServerParameters"].call_args.kwargs
-    assert kwargs["command"] == "npx"
-    assert "mcp-remote" in kwargs["args"]
-    assert "https://gitlab.com/api/v4/mcp" in kwargs["args"]
-    # PRIVATE-TOKEN passed via --header for mcp-remote
-    header_idx = kwargs["args"].index("--header")
-    assert kwargs["args"][header_idx + 1] == "PRIVATE-TOKEN:glpat-test-fake"
+    # Windows path goes through cmd /c; posix uses npx directly.
+    if os.name == "nt":
+        assert kwargs["command"] == "cmd"
+        assert kwargs["args"][:3] == ["/c", "npx", "-y"]
+        assert "@zereight/mcp-gitlab" in kwargs["args"]
+    else:
+        assert kwargs["command"] == "npx"
+        assert kwargs["args"] == ["-y", "@zereight/mcp-gitlab"]
 
 
-def test_unknown_transport_raises(monkeypatch):
-    monkeypatch.setenv("GITLAB_MCP_TRANSPORT", "smoke-signals")
-    _install_stubs()
+def test_stdio_env_carries_token_and_api_url():
+    captured = _install_stubs()
     mod = _fresh_import()
-    with pytest.raises(ValueError, match="GITLAB_MCP_TRANSPORT"):
-        mod.build_gitlab_toolset()
+    mod.build_gitlab_toolset()
+
+    env = captured["StdioServerParameters"].call_args.kwargs["env"]
+    assert env["GITLAB_PERSONAL_ACCESS_TOKEN"] == "glpat-test-fake"
+    assert env["GITLAB_API_URL"] == "https://gitlab.com/api/v4"
+    assert env["GITLAB_READ_ONLY_MODE"] == "false"
+
+
+def test_tool_filter_is_allowlist():
+    captured = _install_stubs()
+    mod = _fresh_import()
+    mod.build_gitlab_toolset()
+
+    kwargs = captured["McpToolset"].call_args.kwargs
+    assert kwargs["tool_filter"] == list(mod.GITLAB_TOOL_ALLOWLIST)
+    for required in (
+        "list_commits",
+        "create_issue",
+        "create_merge_request",
+        "get_merge_request_diffs",
+        "merge_merge_request",
+    ):
+        assert required in kwargs["tool_filter"]
+
+
+def test_toolset_uses_stdio_connection_params():
+    captured = _install_stubs()
+    mod = _fresh_import()
+    mod.build_gitlab_toolset()
+
+    captured["StdioConnectionParams"].assert_called_once()
+    captured["McpToolset"].assert_called_once()

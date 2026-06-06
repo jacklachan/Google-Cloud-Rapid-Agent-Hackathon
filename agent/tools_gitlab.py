@@ -1,32 +1,30 @@
 """GitLab MCP toolset.
 
-Faultline talks to GitLab through the **official GitLab MCP server** (hosted
-at ``<gitlab>/api/v4/mcp``) wired in via ADK's ``McpToolset``. This is the
-load-bearing partner integration per the hackathon rules: commit/diff reads
-AND issue/MR creation all flow through MCP.
+The hackathon track requires the GitLab integration to be load-bearing through
+an MCP server. We use the community **@zereight/mcp-gitlab** server (`npx -y
+@zereight/mcp-gitlab`) which speaks MCP over stdio and wraps the GitLab REST
+API. We picked this over the official `<gitlab>/api/v4/mcp` endpoint because
+the official server requires GitLab Ultimate on a group namespace, which is
+not available on free-tier personal namespaces — and the demo runs on a
+personal gitlab.com project.
 
-Connection model
-----------------
-We default to the **Streamable HTTP** transport going straight at the GitLab
-MCP endpoint, with a ``PRIVATE-TOKEN`` header carrying the user's GitLab
-personal access token. This avoids needing a node runtime in Cloud Run.
+The server is launched as a child process per session via ADK's
+``StdioConnectionParams`` + ``StdioServerParameters``. Auth is via the env vars
+the server reads (``GITLAB_PERSONAL_ACCESS_TOKEN``, ``GITLAB_API_URL``) which
+we copy from our ``GITLAB_TOKEN`` / ``GITLAB_URL`` settings.
 
-If ``GITLAB_MCP_TRANSPORT=stdio`` is set, we fall back to launching
-``npx mcp-remote`` as a child process (Claude Desktop's pattern). This is
-useful for local dev environments where the streaming HTTP transport is
-inconvenient.
-
-Tool filtering
+Tool allowlist
 --------------
-We only expose the tools the investigation policy actually uses. This keeps
-the LLM's tool list focused and reduces the chance of stray actions:
+Only the tools the 8-step investigation policy actually uses are exposed to
+the agent:
 
-  - ``search``                      : find recent commits/MRs touching a path
-  - ``get_merge_request_commits``   : list commits for a given MR
-  - ``get_merge_request_diffs``     : read the diff of an MR (step 4)
-  - ``get_merge_request``           : MR metadata
-  - ``create_issue``                : post the postmortem (step 7b)
-  - ``create_merge_request``        : open the DRAFT rollback MR (step 7c)
+    list_commits              - step 3 (recent commits on the suspect service)
+    get_merge_request         - MR metadata
+    get_merge_request_diffs   - step 4 (read the suspect diff)
+    list_merge_requests       - find recent merges
+    create_issue              - step 7b (postmortem)
+    create_merge_request      - step 7c (DRAFT rollback)
+    merge_merge_request       - used by /approve (phase 7)
 """
 
 from __future__ import annotations
@@ -39,22 +37,20 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 
-# Tools we let the agent see. Keep narrow.
 GITLAB_TOOL_ALLOWLIST: tuple[str, ...] = (
-    "search",
-    "get_merge_request_commits",
-    "get_merge_request_diffs",
+    "list_commits",
     "get_merge_request",
+    "get_merge_request_diffs",
+    "list_merge_requests",
     "create_issue",
     "create_merge_request",
+    "merge_merge_request",
 )
 
 
-# Public so callers (tests, agent factory) can introspect what we'd send.
-def gitlab_mcp_endpoint() -> str:
-    """Resolve the MCP endpoint URL from env. Default: gitlab.com SaaS."""
+def gitlab_api_url() -> str:
     base = os.getenv("GITLAB_URL", "https://gitlab.com").rstrip("/")
-    return f"{base}/api/v4/mcp"
+    return f"{base}/api/v4"
 
 
 def _require_token() -> str:
@@ -68,43 +64,29 @@ def _require_token() -> str:
     return token
 
 
-def _http_connection_params() -> Any:
-    """Build StreamableHTTPConnectionParams for the GitLab MCP endpoint."""
-    from google.adk.tools.mcp_tool.mcp_session_manager import (
-        StreamableHTTPConnectionParams,
-    )
-
-    return StreamableHTTPConnectionParams(
-        url=gitlab_mcp_endpoint(),
-        headers={"PRIVATE-TOKEN": _require_token()},
-        timeout=10.0,
-    )
-
-
-def _stdio_connection_params() -> Any:
-    """Build StdioConnectionParams launching `npx mcp-remote`.
-
-    Used when GITLAB_MCP_TRANSPORT=stdio. mcp-remote bridges a stdio MCP
-    client to a remote streamable-HTTP MCP server and supports passing
-    custom headers via `--header`. We inject PRIVATE-TOKEN the same way.
-    """
-    from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+def _stdio_params() -> Any:
+    """Build StdioServerParameters launching `npx -y @zereight/mcp-gitlab`."""
     from mcp import StdioServerParameters
 
     token = _require_token()
-    endpoint = gitlab_mcp_endpoint()
-    server_params = StdioServerParameters(
+    env = {
+        **os.environ,
+        "GITLAB_PERSONAL_ACCESS_TOKEN": token,
+        "GITLAB_API_URL": gitlab_api_url(),
+        "GITLAB_READ_ONLY_MODE": "false",
+    }
+    # On Windows, npx must be invoked via cmd.exe so Node's shim resolves.
+    if os.name == "nt":
+        return StdioServerParameters(
+            command="cmd",
+            args=["/c", "npx", "-y", "@zereight/mcp-gitlab"],
+            env=env,
+        )
+    return StdioServerParameters(
         command="npx",
-        args=[
-            "-y",
-            "mcp-remote",
-            endpoint,
-            "--header",
-            f"PRIVATE-TOKEN:{token}",
-        ],
-        env={**os.environ},
+        args=["-y", "@zereight/mcp-gitlab"],
+        env=env,
     )
-    return StdioConnectionParams(server_params=server_params, timeout=15.0)
 
 
 def build_gitlab_toolset() -> Any:
@@ -113,22 +95,14 @@ def build_gitlab_toolset() -> Any:
     Phase 4 plugs the return value into ``LlmAgent(tools=[...])`` alongside
     the telemetry function tools.
     """
-    from google.adk.tools.mcp_tool import McpToolset
+    from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+    from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 
-    transport = os.getenv("GITLAB_MCP_TRANSPORT", "http").strip().lower()
-    if transport == "stdio":
-        conn = _stdio_connection_params()
-    elif transport in ("http", "streamable", "streamable_http"):
-        conn = _http_connection_params()
-    else:
-        raise ValueError(
-            f"Unknown GITLAB_MCP_TRANSPORT={transport!r}. Use 'http' or 'stdio'."
-        )
+    conn = StdioConnectionParams(server_params=_stdio_params(), timeout=30.0)
 
     log.info(
-        "GitLab MCP toolset configured (transport=%s, endpoint=%s, tools=%s)",
-        transport,
-        gitlab_mcp_endpoint(),
+        "GitLab MCP toolset configured (community @zereight/mcp-gitlab, api=%s, tools=%s)",
+        gitlab_api_url(),
         ", ".join(GITLAB_TOOL_ALLOWLIST),
     )
     return McpToolset(

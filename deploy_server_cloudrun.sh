@@ -51,7 +51,7 @@ if ! gcloud artifacts repositories describe "${REPO}" \
 fi
 
 echo ">>> building ${IMAGE}"
-gcloud builds submit "$(pwd)" --tag="${IMAGE}" --file=Dockerfile
+gcloud builds submit . --config=cloudbuild.yaml --substitutions="_IMAGE=${IMAGE}"
 
 echo ">>> deploying ${SERVICE_NAME}"
 gcloud run deploy "${SERVICE_NAME}" \

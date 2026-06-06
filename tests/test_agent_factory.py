@@ -34,18 +34,13 @@ def _install_adk_stubs() -> dict[str, MagicMock]:
     g_adk_agents.LlmAgent = MagicMock(name="LlmAgent")
     g_adk_tools = types.ModuleType("google.adk.tools")
     g_adk_tools_mcp = types.ModuleType("google.adk.tools.mcp_tool")
-    g_adk_tools_mcp.McpToolset = MagicMock(name="McpToolset")
+    g_adk_tools_mcp_toolset = types.ModuleType("google.adk.tools.mcp_tool.mcp_toolset")
+    g_adk_tools_mcp_toolset.McpToolset = MagicMock(name="McpToolset")
     g_adk_tools_mcp_mgr = types.ModuleType("google.adk.tools.mcp_tool.mcp_session_manager")
-    g_adk_tools_mcp_mgr.StreamableHTTPConnectionParams = MagicMock(
-        name="StreamableHTTPConnectionParams"
-    )
     g_adk_tools_mcp_mgr.StdioConnectionParams = MagicMock(name="StdioConnectionParams")
 
     captured["LlmAgent"] = g_adk_agents.LlmAgent
-    captured["McpToolset"] = g_adk_tools_mcp.McpToolset
-    captured["StreamableHTTPConnectionParams"] = (
-        g_adk_tools_mcp_mgr.StreamableHTTPConnectionParams
-    )
+    captured["McpToolset"] = g_adk_tools_mcp_toolset.McpToolset
 
     sys.modules["mcp"] = mcp_mod
     sys.modules["google"] = g
@@ -53,6 +48,7 @@ def _install_adk_stubs() -> dict[str, MagicMock]:
     sys.modules["google.adk.agents"] = g_adk_agents
     sys.modules["google.adk.tools"] = g_adk_tools
     sys.modules["google.adk.tools.mcp_tool"] = g_adk_tools_mcp
+    sys.modules["google.adk.tools.mcp_tool.mcp_toolset"] = g_adk_tools_mcp_toolset
     sys.modules["google.adk.tools.mcp_tool.mcp_session_manager"] = g_adk_tools_mcp_mgr
     return captured
 

@@ -1,0 +1,19 @@
+# Cloud Build config for the victim image. Run from repo root so the
+# `victim_service/...` COPY paths in the Dockerfile resolve correctly:
+#
+#   gcloud builds submit . --config=victim_service/cloudbuild.yaml \
+#     --substitutions=_IMAGE=us-central1-docker.pkg.dev/<project>/faultline/victim:<tag>
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - victim_service/Dockerfile
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+options:
+  logging: CLOUD_LOGGING_ONLY
