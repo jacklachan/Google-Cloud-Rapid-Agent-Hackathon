@@ -123,7 +123,7 @@ The agent's behaviour is governed by a fixed 8-step policy baked verbatim into t
 - [x] **Phase 0** — scaffold, MIT license, env contract, README skeleton.
 - [x] **Phase 1** — victim_service (3-role FastAPI chain, one image), OpenTelemetry, Dockerfile, Cloud Run deploy script, regression toggle.
 - [x] **Phase 2** — telemetry read tools (Cloud Logging/Trace/Monitoring) with `FAULTLINE_FAKE_TELEMETRY=1` fixture mode keyed by `FAULTLINE_FAKE_SCENARIO`.
-- [ ] Phase 3 — GitLab MCP toolset wiring; round-trip issue + draft MR.
+- [x] **Phase 3** — GitLab MCP toolset (`McpToolset` + `StreamableHTTPConnectionParams` on `<gitlab>/api/v4/mcp` with `PRIVATE-TOKEN` header). Tool allowlist limited to `search`, `get_merge_request_commits`, `get_merge_request_diffs`, `get_merge_request`, `create_issue`, `create_merge_request`. Live de-risk via `python -m scripts.gitlab_smoke`.
 - [ ] Phase 4 — Gemini ADK agent + investigation policy as system prompt.
 - [ ] Phase 5 — FastAPI server + SSE step streaming.
 - [ ] Phase 6 — web console UI.
