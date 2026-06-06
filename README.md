@@ -125,7 +125,7 @@ The agent's behaviour is governed by a fixed 8-step policy baked verbatim into t
 - [x] **Phase 2** — telemetry read tools (Cloud Logging/Trace/Monitoring) with `FAULTLINE_FAKE_TELEMETRY=1` fixture mode keyed by `FAULTLINE_FAKE_SCENARIO`.
 - [x] **Phase 3** — GitLab MCP toolset (`McpToolset` + `StreamableHTTPConnectionParams` on `<gitlab>/api/v4/mcp` with `PRIVATE-TOKEN` header). Tool allowlist limited to `search`, `get_merge_request_commits`, `get_merge_request_diffs`, `get_merge_request`, `create_issue`, `create_merge_request`. Live de-risk via `python -m scripts.gitlab_smoke`.
 - [x] **Phase 4** — Gemini ADK `LlmAgent` factory wiring `gemini-2.5-flash` on Vertex AI + `INVESTIGATION_POLICY` as system prompt + telemetry function tools + GitLab MCP toolset.
-- [ ] Phase 5 — FastAPI server + SSE step streaming.
+- [x] **Phase 5** — FastAPI server: `POST /investigate` (SSE), `GET /pending`, `POST /approve/{rb}` stub, in-memory rollback registry. `FAULTLINE_FAKE_AGENT=1` switches to a canned step sequence for offline UI dev.
 - [ ] Phase 6 — web console UI.
 - [ ] Phase 7 — human Approve gate -> merge + redeploy.
 - [ ] Phase 8 — plant regression, end-to-end demo, tests, architecture diagram.
