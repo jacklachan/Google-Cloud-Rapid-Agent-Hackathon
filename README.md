@@ -1,6 +1,6 @@
 # Faultline
 
-[![tests](https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon/actions/workflows/tests.yml/badge.svg)](https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon/actions/workflows/tests.yml)
+[![tests](https://github.com/jacklachan/faultline/actions/workflows/tests.yml/badge.svg)](https://github.com/jacklachan/faultline/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Gemini 2.5 Flash](https://img.shields.io/badge/LLM-Gemini%202.5%20Flash%20%E2%80%A2%20Vertex%20AI-4285F4)](https://cloud.google.com/vertex-ai)
 [![Google ADK](https://img.shields.io/badge/Orchestration-Google%20ADK-34A853)](https://github.com/google/adk-python)
@@ -95,7 +95,8 @@ Prereqs: Python 3.11+, `gcloud` CLI, a GCP project with Vertex AI + Cloud Loggin
 
 ```powershell
 # 1. clone + venv
-git clone https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon.git faultline
+git clone https://github.com/jacklachan/faultline.git
+cd faultline
 cd faultline
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1

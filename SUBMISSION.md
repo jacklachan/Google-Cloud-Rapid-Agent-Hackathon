@@ -91,7 +91,7 @@ The terminal merge — which fires the redeploy — is a plain GitLab REST call 
 
 ## Repo
 
-`https://github.com/jacklachan/Google-Cloud-Rapid-Agent-Hackathon`
+`https://github.com/jacklachan/faultline`
 
 ## Demo
 

@@ -40,3 +40,8 @@ package-lock.json
 
 # Cloud SDK leftovers
 .gcloud/
+
+# Build / run scratch
+*.tmp
+_server.pid.txt
+.commit-msg.tmp
