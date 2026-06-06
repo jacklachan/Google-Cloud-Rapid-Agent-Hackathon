@@ -9,7 +9,7 @@
 > **Production just broke. On-call wastes 10 minutes finding which service is at fault and which commit caused it. Faultline does it in seconds — autonomous Gemini agent, GitLab MCP load-bearing, human-gated rollback.**
 
 Submitted to the **Google Cloud Rapid Agent Hackathon — GitLab track**.
-See **[SUBMISSION.md](SUBMISSION.md)** for the full writeup and **[DEMO.md](DEMO.md)** for the 3-minute demo script.
+**Live demo:** https://faultline-1083927168045.us-central1.run.app — click the green **⚡ Plant + investigate** button. Full walkthrough in [SUBMISSION.md](SUBMISSION.md) and [DEMO.md](DEMO.md).
 
 ---
 

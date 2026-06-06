@@ -94,9 +94,18 @@ All six tools flow through the community `@zereight/mcp-gitlab` server, launched
 
 `https://github.com/jacklachan/faultline`
 
-## Demo
+## Live system (try it in 60 seconds)
 
-See [DEMO.md](DEMO.md) for a 3-minute scripted walkthrough.
+URL: **https://faultline-1083927168045.us-central1.run.app**
+
+1. Open the URL.
+2. Click the green **⚡ Plant + investigate** button.
+3. Watch the agent stream its 8-step policy live: read Cloud Monitoring metrics, walk the dep graph, query GitLab MCP for recent commits, identify the suspect commit + diff, open a postmortem issue, stage a Draft rollback MR.
+4. The rollback card appears at the bottom-left with links to the real GitLab issue and the real Draft MR. Click **Approve rollback**. The server merges the MR via GitLab REST and the registry status flips to `merged`.
+
+That single button creates a fresh real GitLab commit, fresh real Draft MR, runs a fresh real Gemini investigation, and produces a fresh real merged MR. Each click is its own end-to-end demo so multiple judges can verify independently.
+
+See [DEMO.md](DEMO.md) for the 3-minute scripted walkthrough.
 
 ## License
 

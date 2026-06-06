@@ -136,6 +136,19 @@ button {
 }
 
 button[type="submit"] { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+
+#oneclick {
+  background: var(--ok);
+  color: #0d1117;
+  border-color: var(--ok);
+  font-weight: 600;
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.95rem;
+}
+#oneclick:not(:disabled):hover { border-color: var(--accent); background: var(--accent); }
+
+p.micro { margin: 0.4rem 0 0.2rem; font-size: 0.75rem; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button:not(:disabled):hover { border-color: var(--accent); }
 

@@ -23,6 +23,7 @@ from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from .demo import plant_regression
 from .gitlab_actions import mark_mr_ready, merge_mr
 from .investigate import stream_investigation
 from .rollbacks import REGISTRY
@@ -113,6 +114,19 @@ async def investigate_get(
         scenario=scenario,
         project_id=project_id,
     )
+
+
+@app.post("/demo/plant")
+async def demo_plant(scenario: str = "n_plus_one") -> dict[str, Any]:
+    """Drop a fresh regression commit on the GitLab project so the next
+    investigation has something real to find. Idempotent — each call creates
+    a fresh branch + MR.
+    """
+    try:
+        return await plant_regression(scenario)
+    except Exception as exc:
+        log.exception("demo plant failed")
+        raise HTTPException(status_code=502, detail=f"plant failed: {exc}") from exc
 
 
 @app.get("/pending")

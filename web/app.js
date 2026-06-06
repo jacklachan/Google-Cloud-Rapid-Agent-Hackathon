@@ -324,6 +324,55 @@
     startInvestigation(payload);
   });
 
+  const oneClickBtn = document.getElementById("oneclick");
+  if (oneClickBtn) {
+    oneClickBtn.addEventListener("click", async () => {
+      const fd = new FormData(form);
+      const scenario = fd.get("scenario") || "n_plus_one";
+      const service = fd.get("service") || "faultline-victim-frontend";
+      const window_minutes = Number(fd.get("window_minutes")) || 15;
+      const project_id = fd.get("project_id") || "";
+
+      clearStream();
+      if (emptyStream) emptyStream.classList.add("hidden");
+      setStatus("planting fresh regression commit in GitLab…", "running");
+      startElapsed();
+      oneClickBtn.disabled = true;
+      startBtn.disabled = true;
+
+      try {
+        const r = await fetch("/demo/plant?scenario=" + encodeURIComponent(scenario), { method: "POST" });
+        if (!r.ok) {
+          const t = await r.text();
+          throw new Error("plant failed: " + t.slice(0, 200));
+        }
+        const plant = await r.json();
+        const planted = makeRow({
+          type: "step",
+          step: 0,
+          text:
+            "Planted regression in GitLab → " + (plant.title || "(no title)") +
+            "  · MR !" + plant.mr_iid +
+            "  · commit " + (plant.merge_commit_sha || plant.commit_sha || "").slice(0, 8),
+        });
+        streamEl.appendChild(planted);
+        setStatus("regression live — starting investigation…", "running");
+        startInvestigation({
+          service,
+          window_minutes,
+          scenario,
+          project_id,
+        });
+      } catch (err) {
+        setStatus("error: " + err.message, "error");
+        console.error(err);
+        startBtn.disabled = false;
+        oneClickBtn.disabled = false;
+        stopElapsed();
+      }
+    });
+  }
+
   resetBtn.addEventListener("click", () => {
     if (currentSource) {
       currentSource.close();
