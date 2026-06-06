@@ -69,6 +69,8 @@ def test_full_loop_per_scenario(scenario, expected_sha_prefix):
     client = TestClient(app)
 
     events = _collect(client, scenario)
+    # The server prepends a `ready` flush event before the agent's narration.
+    events = [e for e in events if e["type"] != "ready"]
     types = [e["type"] for e in events]
 
     # Policy structure visible in the stream.
