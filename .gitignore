@@ -43,5 +43,10 @@ package-lock.json
 
 # Build / run scratch
 *.tmp
+*.log
 _server.pid.txt
 .commit-msg.tmp
+deploy*.log
+load*.log
+investigate*.log
+resp*.json
