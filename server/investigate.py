@@ -150,6 +150,50 @@ def _result_preview(value: Any, limit: int = 240) -> str:
 
 
 import re
+from urllib.parse import quote as _urlquote
+
+
+async def _recent_mrs_blurb(project_id: str) -> str:
+    """Return a short string listing the last 3 merged MRs on the project.
+
+    Injected into the agent's incident message so it cannot skip step 3 by
+    claiming "no recent commits" — they're literally in the prompt.
+    """
+    import httpx
+
+    base = os.getenv("GITLAB_URL", "https://gitlab.com").rstrip("/")
+    token = os.getenv("GITLAB_TOKEN")
+    if not token:
+        return "(GitLab token not configured; you must still call list_commits / list_merge_requests.)"
+
+    url = f"{base}/api/v4/projects/{_urlquote(project_id, safe='')}/merge_requests"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                url,
+                headers={"PRIVATE-TOKEN": token},
+                params={"state": "merged", "order_by": "updated_at", "sort": "desc", "per_page": 3},
+            )
+            r.raise_for_status()
+            mrs = r.json()
+    except Exception as exc:
+        log.warning("recent MR blurb failed: %s", exc)
+        return "(could not pre-fetch recent MRs; you must still call list_merge_requests / list_commits.)"
+
+    if not mrs:
+        return "(no merged MRs found yet; check list_merge_requests anyway.)"
+
+    lines = ["RECENT MERGED MRs on this project (most recent first):"]
+    for m in mrs:
+        sha = (m.get("merge_commit_sha") or "")[:8]
+        lines.append(
+            f"  MR !{m.get('iid')}  sha {sha}  title: {m.get('title', '')[:100]}"
+        )
+    lines.append(
+        "Treat the MOST RECENT merged MR as the prime suspect unless its diff "
+        "clearly cannot explain the symptom class above."
+    )
+    return "\n".join(lines)
 
 
 def _extract_suspect_sha(text: str) -> str | None:
@@ -185,10 +229,17 @@ async def _real_run(
         auto_create_session=True,
     )
 
+    # Inject the recent GitLab activity so the agent cannot rationalise its
+    # way out of step 3. Real demos plant a fresh MR seconds before this runs;
+    # we want the agent to SEE that recent merge in its prompt regardless of
+    # how flaky Cloud Monitoring is being.
+    recent_mr_blurb = await _recent_mrs_blurb(project_id)
+
     user_msg_text = (
         f"INCIDENT ACTIVE on service '{service}'. Observed in the last "
         f"{window_minutes} minutes. Known symptom class: '{scenario}'. "
         f"The GitLab project to investigate is '{project_id}'.\n\n"
+        f"{recent_mr_blurb}\n"
         "Execute the 8-step policy END-TO-END. You MUST:\n"
         "- proceed past step 2 even if Cloud Monitoring metrics look noisy "
         "or partially empty (real telemetry can lag by 1-2 minutes after a "
