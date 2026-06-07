@@ -8,7 +8,7 @@
 #   GITLAB_URL                (defaults to https://gitlab.com)
 #   GITLAB_PROJECT_PATH
 #   GITLAB_TOKEN
-#   VERTEX_AI_MODEL           (defaults to gemini-2.5-flash)
+#   VERTEX_AI_MODEL           (defaults to gemini-3.1-pro-preview)
 #
 # Runs from Git Bash / WSL on Windows, or any *nix shell with gcloud.
 
@@ -28,7 +28,7 @@ fi
 : "${GITLAB_TOKEN:?GITLAB_TOKEN must be set}"
 
 GITLAB_URL="${GITLAB_URL:-https://gitlab.com}"
-VERTEX_AI_MODEL="${VERTEX_AI_MODEL:-gemini-2.5-flash}"
+VERTEX_AI_MODEL="${VERTEX_AI_MODEL:-gemini-3.1-pro-preview}"
 SERVICE_NAME="faultline"
 REPO="faultline"
 AR_HOST="${GOOGLE_CLOUD_REGION}-docker.pkg.dev"
