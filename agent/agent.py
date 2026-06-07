@@ -61,8 +61,14 @@ def _ensure_vertex_env() -> None:
             "Vertex AI is regional; pick e.g. us-central1 and put it in .env."
         )
     os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
-    # google-genai reads GOOGLE_CLOUD_LOCATION; mirror our REGION onto it.
-    if not os.getenv("GOOGLE_CLOUD_LOCATION"):
+    # google-genai reads GOOGLE_CLOUD_LOCATION. Gemini 3 family models are
+    # only served from the `global` Vertex endpoint; regional endpoints
+    # (us-central1 etc.) return 404 for them. For 2.5 and earlier, the
+    # regional endpoint is the right answer. Pick based on the model id.
+    model_hint = (os.getenv("VERTEX_AI_MODEL") or "").lower()
+    if model_hint.startswith("gemini-3"):
+        os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+    elif not os.getenv("GOOGLE_CLOUD_LOCATION"):
         os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ["GOOGLE_CLOUD_REGION"]
 
 
