@@ -186,11 +186,27 @@ async def _real_run(
     )
 
     user_msg_text = (
-        f"Incident: service '{service}' is alerting over the last "
-        f"{window_minutes} minutes. Scenario hint (offline replay only): "
-        f"{scenario}. The project to investigate in GitLab is {project_id}. "
-        "Follow the 8-step investigation policy. Stage a DRAFT rollback MR "
-        "and stop for approval — do not merge."
+        f"INCIDENT ACTIVE on service '{service}'. Observed in the last "
+        f"{window_minutes} minutes. Known symptom class: '{scenario}'. "
+        f"The GitLab project to investigate is '{project_id}'.\n\n"
+        "Execute the 8-step policy END-TO-END. You MUST:\n"
+        "- proceed past step 2 even if Cloud Monitoring metrics look noisy "
+        "or partially empty (real telemetry can lag by 1-2 minutes after a "
+        "deploy);\n"
+        "- in step 3 always call list_commits AND list_merge_requests on the "
+        "GitLab project to enumerate recent changes regardless of metric "
+        "confidence;\n"
+        "- in step 4 always call get_merge_request_diffs on the most recent "
+        "merged MR;\n"
+        "- in step 5 match the diff against the known symptom class "
+        f"'{scenario}';\n"
+        "- in step 7 call create_issue (postmortem) AND attempt "
+        "create_merge_request with draft=true. If create_merge_request fails "
+        "because the source_branch does not exist, that is expected — the "
+        "host process owns the REST fallback that completes step 7c "
+        "deterministically.\n"
+        "- DO NOT stop early, DO NOT skip steps, DO NOT apologise. Take the "
+        "actions, then STOP for approval."
     )
     new_message = genai_types.Content(
         role="user",
